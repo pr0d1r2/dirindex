@@ -54,7 +54,12 @@ check_deps() {
 }
 
 get_duration() {
-    ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null | cut -d. -f1
+    local raw
+    raw="$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null | cut -d. -f1)"
+    # Return empty for non-numeric values (corrupt/incomplete files)
+    if [[ "$raw" =~ ^[0-9]+$ ]]; then
+        echo "$raw"
+    fi
 }
 
 generate_thumbnails() {
@@ -86,14 +91,27 @@ generate_thumbnails() {
     fi
 
     echo "  GENERATING ${total} thumbnails: $video_name"
+    local failed=0
     for (( i = 0; i < total; i++ )); do
         local secs=$(( i * 60 ))
         local outfile="${thumb_base}/$(printf '%04d' "$i").jpg"
         if [[ -f "$outfile" ]]; then continue; fi
-        ffmpeg -nostdin -v quiet -ss "$secs" -i "$video" \
+        if ! ffmpeg -nostdin -v quiet -ss "$secs" -i "$video" \
             -vframes 1 -vf "scale=${THUMB_WIDTH}:-1" \
-            -q:v 4 "$outfile" 2>/dev/null || true
+            -q:v 4 "$outfile" 2>/dev/null; then
+            # Remove failed partial output
+            rm -f "$outfile"
+            failed=$(( failed + 1 ))
+            # If multiple failures, video is likely incomplete — stop trying
+            if [[ "$failed" -ge 3 ]]; then
+                echo "  SKIP (too many errors, likely incomplete): $video_name"
+                return
+            fi
+        fi
     done
+    if [[ "$failed" -gt 0 ]]; then
+        echo "  WARN (${failed} thumbnails failed): $video_name"
+    fi
 }
 
 make_time_label() {
