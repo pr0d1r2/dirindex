@@ -90,7 +90,7 @@ generate_thumbnails() {
         local secs=$(( i * 60 ))
         local outfile="${thumb_base}/$(printf '%04d' "$i").jpg"
         if [[ -f "$outfile" ]]; then continue; fi
-        ffmpeg -v quiet -ss "$secs" -i "$video" \
+        ffmpeg -nostdin -v quiet -ss "$secs" -i "$video" \
             -vframes 1 -vf "scale=${THUMB_WIDTH}:-1" \
             -q:v 4 "$outfile" 2>/dev/null || true
     done
@@ -125,7 +125,7 @@ generate_index() {
         [[ -d "$sub" ]] || continue
         local subname
         subname="$(basename "$sub")"
-        [[ "$subname" == "$THUMB_DIR" ]] && continue
+        if [[ "$subname" == "$THUMB_DIR" ]]; then continue; fi
         # Check if subdir has any videos recursively
         local count
         count="$(find "$sub" -type f \( \
@@ -247,7 +247,7 @@ HTMLSTYLE
         vid_id="vid_$(echo "$vname" | md5 -q 2>/dev/null || echo "$vname" | md5sum 2>/dev/null | cut -d' ' -f1)"
         local duration
         duration="$(get_duration "$video")"
-        [[ -z "$duration" || "$duration" -eq 0 ]] && continue
+        if [[ -z "$duration" || "$duration" -eq 0 ]]; then continue; fi
         local minutes=$(( duration / 60 ))
         local total_thumbs=$(( minutes + 1 ))
 
@@ -294,7 +294,7 @@ do_generate() {
         # Deduplicate
         local found=false
         for d in "${dirs_with_videos[@]+"${dirs_with_videos[@]}"}"; do
-            [[ "$d" == "$vdir" ]] && found=true && break
+            if [[ "$d" == "$vdir" ]]; then found=true; break; fi
         done
         $found || dirs_with_videos+=("$vdir")
     done < <(find "$BASE_DIR" -type f \( \
@@ -337,7 +337,7 @@ do_generate() {
         # Add the dir itself
         local found=false
         for existing in "${all_index_dirs[@]}"; do
-            [[ "$existing" == "$d" ]] && found=true && break
+            if [[ "$existing" == "$d" ]]; then found=true; break; fi
         done
         $found || all_index_dirs+=("$d")
 
@@ -345,10 +345,10 @@ do_generate() {
         local parent="$d"
         while true; do
             parent="$(dirname "$parent")"
-            [[ "$parent" == "$BASE_DIR" || ${#parent} -lt ${#BASE_DIR} ]] && break
+            if [[ "$parent" == "$BASE_DIR" || ${#parent} -lt ${#BASE_DIR} ]]; then break; fi
             found=false
             for existing in "${all_index_dirs[@]}"; do
-                [[ "$existing" == "$parent" ]] && found=true && break
+                if [[ "$existing" == "$parent" ]]; then found=true; break; fi
             done
             $found || all_index_dirs+=("$parent")
         done
