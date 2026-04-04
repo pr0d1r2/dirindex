@@ -125,7 +125,7 @@ generate_index() {
     rel_dir="${rel_dir#/}"
     local dir_name
     dir_name="$(basename "$dir")"
-    [[ -z "$rel_dir" ]] && dir_name="Videos"
+    if [[ -z "$rel_dir" ]]; then dir_name="Videos"; fi
 
     # Collect videos in this directory (non-recursive)
     local videos=()
@@ -245,7 +245,7 @@ HTMLSTYLE
     # Subdirectory links
     if [[ ${#subdirs[@]} -gt 0 ]]; then
         echo '<div class="subdirs">' >> "${dir}/index.html"
-        for sub in "${subdirs[@]}"; do
+        for sub in "${subdirs[@]+"${subdirs[@]}"}"; do
             local subname
             subname="$(basename "$sub")"
             local encoded
@@ -256,7 +256,7 @@ HTMLSTYLE
     fi
 
     # Video blocks
-    for video in "${videos[@]}"; do
+    for video in "${videos[@]+"${videos[@]}"}"; do
         local vname
         vname="$(basename "$video")"
         local encoded_vname
@@ -351,7 +351,7 @@ do_generate() {
     # Generate for base dir and all dirs with videos
     # Also generate for parent dirs that have subdirs with videos
     local all_index_dirs=("$BASE_DIR")
-    for d in "${dirs_with_videos[@]}"; do
+    for d in "${dirs_with_videos[@]+"${dirs_with_videos[@]}"}"; do
         # Add the dir itself
         local found=false
         for existing in "${all_index_dirs[@]}"; do
