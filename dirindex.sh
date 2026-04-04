@@ -89,7 +89,7 @@ generate_thumbnails() {
     for (( i = 0; i < total; i++ )); do
         local secs=$(( i * 60 ))
         local outfile="${thumb_base}/$(printf '%04d' "$i").jpg"
-        [[ -f "$outfile" ]] && continue
+        if [[ -f "$outfile" ]]; then continue; fi
         ffmpeg -v quiet -ss "$secs" -i "$video" \
             -vframes 1 -vf "scale=${THUMB_WIDTH}:-1" \
             -q:v 4 "$outfile" 2>/dev/null || true
