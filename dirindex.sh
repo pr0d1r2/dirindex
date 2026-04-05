@@ -12,6 +12,7 @@ PORT="${DIRINDEX_PORT:-6969}"
 THUMB_DIR=".thumbs"
 VIDEO_EXTENSIONS="mp4|mkv|avi|mov|webm|m4v|flv|wmv|mpg|mpeg|ts"
 THUMB_WIDTH=240
+SPRITE_COLS=10
 VIDEOS_PER_PAGE=1
 
 usage() {
@@ -114,7 +115,9 @@ generate_thumbnails() {
     video_dir="$(dirname "$video")"
     local video_name
     video_name="$(basename "$video")"
-    local thumb_base="${video_dir}/${THUMB_DIR}/${video_name}"
+    local thumb_dir="${video_dir}/${THUMB_DIR}"
+    local sprite_file="${thumb_dir}/${video_name}.jpg"
+    local meta_file="${thumb_dir}/${video_name}.meta"
 
     local duration
     duration="$(get_duration "$video")"
@@ -123,42 +126,32 @@ generate_thumbnails() {
         return
     fi
 
-    mkdir -p "$thumb_base"
-
     local minutes=$(( duration / 60 ))
-    # Always include 0:00, then every minute
     local total=$(( minutes + 1 ))
-    local existing
-    existing="$(find "$thumb_base" -name '*.jpg' 2>/dev/null | wc -l | tr -d ' ')"
+    local rows=$(( (total + SPRITE_COLS - 1) / SPRITE_COLS ))
 
-    if [[ "$existing" -ge "$total" ]]; then
-        echo "  OK (${total} thumbs exist): $video_name"
-        return
+    # Check if sprite already exists with correct frame count
+    if [[ -f "$sprite_file" && -f "$meta_file" ]]; then
+        local cached_total
+        cached_total="$(cat "$meta_file")"
+        if [[ "$cached_total" == "$total" ]]; then
+            echo "  OK (sprite ${total} frames): $video_name"
+            return
+        fi
     fi
 
-    echo "  GENERATING ${total} thumbnails: $video_name"
-    local failed=0
-    for (( i = 0; i < total; i++ )); do
-        local secs=$(( i * 60 ))
-        local outfile="${thumb_base}/$(printf '%04d' "$i").jpg"
-        if [[ -f "$outfile" ]]; then continue; fi
-        local tmpfile="/tmp/dirindex_thumb_$$.jpg"
-        if ! ffmpeg -nostdin -v quiet -ss "$secs" -i "$video" \
-            -vframes 1 -vf "scale=${THUMB_WIDTH}:-1" \
-            -q:v 4 "$tmpfile" 2>/dev/null; then
-            rm -f "$tmpfile"
-            failed=$(( failed + 1 ))
-            # If multiple failures, video is likely incomplete — stop trying
-            if [[ "$failed" -ge 3 ]]; then
-                echo "  SKIP (too many errors, likely incomplete): $video_name"
-                return
-            fi
-        else
-            mv "$tmpfile" "$outfile"
-        fi
-    done
-    if [[ "$failed" -gt 0 ]]; then
-        echo "  WARN (${failed} thumbnails failed): $video_name"
+    mkdir -p "$thumb_dir"
+
+    echo "  GENERATING sprite (${total} frames, ${SPRITE_COLS}x${rows}): $video_name"
+    local tmpfile="/tmp/dirindex_sprite_$$.jpg"
+    if ffmpeg -nostdin -v quiet -i "$video" \
+        -vf "fps=1/60,scale=${THUMB_WIDTH}:-1,tile=${SPRITE_COLS}x${rows}" \
+        -q:v 4 "$tmpfile" 2>/dev/null; then
+        mv "$tmpfile" "$sprite_file"
+        echo "$total" > "$meta_file"
+    else
+        rm -f "$tmpfile"
+        echo "  SKIP (sprite generation failed): $video_name"
     fi
 }
 
@@ -237,11 +230,14 @@ HTMLTITLE
         transition: transform 0.15s;
     }
     .thumb-item:hover { transform: scale(1.08); }
-    .thumb-item img {
+    .thumb-frame {
         display: block; border-radius: 4px;
-        border: 2px solid transparent; width: 120px; height: auto;
+        border: 2px solid transparent;
+        width: 120px; height: 68px;
+        background-size: cover;
+        background-repeat: no-repeat;
     }
-    .thumb-item:hover img { border-color: #7eb8da; }
+    .thumb-item:hover .thumb-frame { border-color: #7eb8da; }
     .thumb-item .time {
         font-size: 11px; color: #888; margin-top: 2px;
     }
@@ -383,14 +379,20 @@ generate_index() {
             encoded_vname="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${vname}'))")"
             local vid_id
             vid_id="vid_$(echo "$vname" | md5 -q 2>/dev/null || echo "$vname" | md5sum 2>/dev/null | cut -d' ' -f1)"
-            local thumb_dir_abs="${dir}/${THUMB_DIR}/${vname}"
+            local sprite_file="${dir}/${THUMB_DIR}/${vname}.jpg"
+            local meta_file="${dir}/${THUMB_DIR}/${vname}.meta"
+            if [[ ! -f "$sprite_file" || ! -f "$meta_file" ]]; then continue; fi
             local total_thumbs
-            total_thumbs="$(find "$thumb_dir_abs" -maxdepth 1 -name '*.jpg' 2>/dev/null | wc -l | tr -d ' ')"
+            total_thumbs="$(cat "$meta_file")"
             if [[ "$total_thumbs" -eq 0 ]]; then continue; fi
 
-            local thumb_base_rel="${THUMB_DIR}/${vname}"
-            local encoded_thumb_base
-            encoded_thumb_base="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${thumb_base_rel}'))")"
+            local sprite_rel="${THUMB_DIR}/${vname}.jpg"
+            local encoded_sprite
+            encoded_sprite="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${sprite_rel}'))")"
+
+            # Get sprite actual dimensions for background-size calc
+            local sprite_rows=$(( (total_thumbs + SPRITE_COLS - 1) / SPRITE_COLS ))
+            local bg_width=$(( SPRITE_COLS * 120 ))
 
             {
                 echo "<div class=\"video-block\">"
@@ -400,20 +402,19 @@ generate_index() {
                 echo "</video>"
                 echo "<div class=\"thumb-strip\">"
 
-                while IFS= read -r thumb_file; do
-                    local thumb_name
-                    thumb_name="$(basename "$thumb_file")"
-                    local minute_num
-                    minute_num="$(echo "$thumb_name" | sed 's/^0*//' | sed 's/\.jpg$//')"
-                    minute_num="${minute_num:-0}"
-                    local secs=$(( minute_num * 60 ))
+                for (( i = 0; i < total_thumbs; i++ )); do
+                    local secs=$(( i * 60 ))
                     local label
                     label="$(make_time_label "$secs")"
+                    local col=$(( i % SPRITE_COLS ))
+                    local row=$(( i / SPRITE_COLS ))
+                    local bg_x=$(( col * 120 ))
+                    local bg_y=$(( row * 68 ))
                     echo "<div class=\"thumb-item\" onclick=\"var v=document.getElementById('${vid_id}');if(v.fastSeek)v.fastSeek(${secs});else v.currentTime=${secs};v.play();v.scrollIntoView({behavior:'smooth'})\">"
-                    echo "  <img src=\"${encoded_thumb_base}/${thumb_name}\" alt=\"${label}\" loading=\"lazy\">"
+                    echo "  <div class=\"thumb-frame\" style=\"background-image:url('${encoded_sprite}');background-size:${bg_width}px auto;background-position:-${bg_x}px -${bg_y}px\"></div>"
                     echo "  <div class=\"time\">${label}</div>"
                     echo "</div>"
-                done < <(find "$thumb_dir_abs" -maxdepth 1 -name '*.jpg' 2>/dev/null | sort)
+                done
 
                 echo "</div></div>"
             } >> "$outfile"
