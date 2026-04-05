@@ -96,17 +96,19 @@ generate_thumbnails() {
         local secs=$(( i * 60 ))
         local outfile="${thumb_base}/$(printf '%04d' "$i").jpg"
         if [[ -f "$outfile" ]]; then continue; fi
+        local tmpfile="/tmp/dirindex_thumb_$$.jpg"
         if ! ffmpeg -nostdin -v quiet -ss "$secs" -i "$video" \
             -vframes 1 -vf "scale=${THUMB_WIDTH}:-1" \
-            -q:v 4 "$outfile" 2>/dev/null; then
-            # Remove failed partial output
-            rm -f "$outfile"
+            -q:v 4 "$tmpfile" 2>/dev/null; then
+            rm -f "$tmpfile"
             failed=$(( failed + 1 ))
             # If multiple failures, video is likely incomplete — stop trying
             if [[ "$failed" -ge 3 ]]; then
                 echo "  SKIP (too many errors, likely incomplete): $video_name"
                 return
             fi
+        else
+            mv "$tmpfile" "$outfile"
         fi
     done
     if [[ "$failed" -gt 0 ]]; then
