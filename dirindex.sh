@@ -337,7 +337,10 @@ do_generate() {
 
     # Generate thumbnails
     echo "--- Thumbnails ---"
+    local current=0
     while IFS= read -r -d '' video; do
+        current=$(( current + 1 ))
+        echo "${current}/${total_videos} $(basename "$video")"
         generate_thumbnails "$video"
     done < <(find "$BASE_DIR" -type f \( \
         -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.avi' -o -iname '*.mov' \
