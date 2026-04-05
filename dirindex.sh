@@ -348,7 +348,7 @@ generate_index() {
             {
                 echo "<div class=\"video-block\">"
                 echo "<div class=\"video-title\">${vname}</div>"
-                echo "<video id=\"${vid_id}\" controls preload=\"metadata\">"
+                echo "<video id=\"${vid_id}\" controls preload=\"auto\">"
                 echo "  <source src=\"${encoded_vname}\">"
                 echo "</video>"
                 echo "<div class=\"thumb-strip\">"
@@ -362,7 +362,7 @@ generate_index() {
                     local secs=$(( minute_num * 60 ))
                     local label
                     label="$(make_time_label "$secs")"
-                    echo "<div class=\"thumb-item\" onclick=\"var v=document.getElementById('${vid_id}');v.currentTime=${secs};v.play();v.scrollIntoView({behavior:'smooth'})\">"
+                    echo "<div class=\"thumb-item\" onclick=\"var v=document.getElementById('${vid_id}');if(v.fastSeek)v.fastSeek(${secs});else v.currentTime=${secs};v.play();v.scrollIntoView({behavior:'smooth'})\">"
                     echo "  <img src=\"${encoded_thumb_base}/${thumb_name}\" alt=\"${label}\" loading=\"lazy\">"
                     echo "  <div class=\"time\">${label}</div>"
                     echo "</div>"
