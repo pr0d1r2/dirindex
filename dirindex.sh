@@ -378,7 +378,9 @@ do_generate() {
     done
 
     for d in "${all_index_dirs[@]}"; do
-        generate_index "$d"
+        if ! generate_index "$d"; then
+            echo "  ERROR: Failed to generate index for ${d}, skipping"
+        fi
     done
     echo ""
     echo "=== Generation complete ==="
