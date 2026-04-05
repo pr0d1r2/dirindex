@@ -58,26 +58,20 @@ check_deps() {
 }
 
 CACHE_FILE=""
-declare -A DURATION_CACHE
+CACHE_DIRTY=false
 
 load_cache() {
     CACHE_FILE="${BASE_DIR}/.dirindex_cache"
-    if [[ -f "$CACHE_FILE" ]]; then
-        while IFS=$'\t' read -r mtime duration filepath; do
-            DURATION_CACHE["${filepath}"]="${mtime}:${duration}"
-        done < "$CACHE_FILE"
+    if [[ ! -f "$CACHE_FILE" ]]; then
+        touch "$CACHE_FILE"
     fi
 }
 
 save_cache() {
-    local tmpfile="/tmp/dirindex_cache_$$.tmp"
-    for filepath in "${!DURATION_CACHE[@]}"; do
-        local entry="${DURATION_CACHE["$filepath"]}"
-        local mtime="${entry%%:*}"
-        local duration="${entry#*:}"
-        printf '%s\t%s\t%s\n' "$mtime" "$duration" "$filepath"
-    done | sort -t$'\t' -k3 > "$tmpfile"
-    mv "$tmpfile" "$CACHE_FILE"
+    if $CACHE_DIRTY; then
+        sort -t$'\t' -k3 "$CACHE_FILE" > "/tmp/dirindex_cache_$$.tmp"
+        mv "/tmp/dirindex_cache_$$.tmp" "$CACHE_FILE"
+    fi
 }
 
 get_duration() {
@@ -85,25 +79,32 @@ get_duration() {
     local file_mtime
     file_mtime="$(stat -f '%m' "$file" 2>/dev/null || stat -c '%Y' "$file" 2>/dev/null)"
 
-    # Check cache
-    if [[ -n "${DURATION_CACHE["$file"]+x}" ]]; then
-        local entry="${DURATION_CACHE["$file"]}"
-        local cached_mtime="${entry%%:*}"
-        local cached_duration="${entry#*:}"
+    # Check cache — grep for exact filepath match (tab-terminated fields)
+    local cached_line
+    cached_line="$(grep -F "$file" "$CACHE_FILE" | grep -m1 "	${file}$")" || true
+    if [[ -n "$cached_line" ]]; then
+        local cached_mtime cached_duration
+        cached_mtime="$(printf '%s' "$cached_line" | cut -f1)"
+        cached_duration="$(printf '%s' "$cached_line" | cut -f2)"
         if [[ "$cached_mtime" == "$file_mtime" ]]; then
             echo "$cached_duration"
             return
         fi
+        # mtime changed — remove old entry
+        grep -v "	${file}$" "$CACHE_FILE" > "/tmp/dirindex_cache_$$.tmp" || true
+        mv "/tmp/dirindex_cache_$$.tmp" "$CACHE_FILE"
     fi
 
     # Cache miss — call ffprobe
     local raw
     raw="$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$file" 2>/dev/null | cut -d. -f1)"
     if [[ "$raw" =~ ^[0-9]+$ ]]; then
-        DURATION_CACHE["$file"]="${file_mtime}:${raw}"
+        printf '%s\t%s\t%s\n' "$file_mtime" "$raw" "$file" >> "$CACHE_FILE"
+        CACHE_DIRTY=true
         echo "$raw"
     else
-        DURATION_CACHE["$file"]="${file_mtime}:"
+        printf '%s\t\t%s\n' "$file_mtime" "$file" >> "$CACHE_FILE"
+        CACHE_DIRTY=true
     fi
 }
 
