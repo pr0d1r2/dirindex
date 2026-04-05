@@ -602,6 +602,50 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path = urllib.parse.unquote(path)
         return super().translate_path(path)
 
+    def serve_range(self, fpath):
+        \"\"\"Serve a file with byte-range support for video seeking.\"\"\"
+        file_size = os.path.getsize(fpath)
+        range_header = self.headers.get('Range', '')
+        ctype = self.guess_type(fpath)
+
+        if range_header.startswith('bytes='):
+            range_spec = range_header[6:]
+            start_str, _, end_str = range_spec.partition('-')
+            start = int(start_str) if start_str else 0
+            end = int(end_str) if end_str else file_size - 1
+            end = min(end, file_size - 1)
+            length = end - start + 1
+
+            self.send_response(206)
+            self.send_header('Content-Type', ctype)
+            self.send_header('Content-Length', str(length))
+            self.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
+            self.send_header('Accept-Ranges', 'bytes')
+            self.end_headers()
+
+            with open(fpath, 'rb') as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        else:
+            self.send_response(200)
+            self.send_header('Content-Type', ctype)
+            self.send_header('Content-Length', str(file_size))
+            self.send_header('Accept-Ranges', 'bytes')
+            self.end_headers()
+
+            with open(fpath, 'rb') as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+
     def do_GET(self):
         if not self.do_AUTHCHECK():
             return
@@ -614,6 +658,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self.send_header('Location', self.path + '/')
                     self.end_headers()
                     return
+        # Use range serving for files
+        if os.path.isfile(path):
+            try:
+                self.serve_range(path)
+                return
+            except Exception:
+                pass
         super().do_GET()
 
     def do_HEAD(self):
