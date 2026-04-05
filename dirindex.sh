@@ -386,31 +386,90 @@ do_generate() {
     echo "=== Generation complete ==="
 }
 
+generate_password() {
+    python3 -c "import secrets, string; print(''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16)))"
+}
+
+setup_auth() {
+    local pass_file="${BASE_DIR}/.dirindex_pass"
+    local password=""
+
+    if [[ -f "$pass_file" ]]; then
+        local saved_pass
+        saved_pass="$(cat "$pass_file")"
+        echo "Saved password found for user 'x'."
+        echo -n "Reuse it? [Y/n/new random] (y): "
+        read -r choice
+        case "$choice" in
+            n|N)
+                echo -n "Enter new password: "
+                read -r -s password
+                echo
+                ;;
+            r|R|random)
+                password="$(generate_password)"
+                echo "Generated password: ${password}"
+                ;;
+            *)
+                password="$saved_pass"
+                ;;
+        esac
+    else
+        echo -n "Set password for user 'x' (leave empty for random): "
+        read -r -s password
+        echo
+        if [[ -z "$password" ]]; then
+            password="$(generate_password)"
+            echo "Generated password: ${password}"
+        fi
+    fi
+
+    echo "$password" > "$pass_file"
+    chmod 600 "$pass_file"
+    AUTH_PASSWORD="$password"
+}
+
 do_serve() {
+    setup_auth
     echo ""
     echo "=== Serving ${BASE_DIR} on http://0.0.0.0:${PORT} ==="
     local ip
     ip="$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo '?')"
-    echo "    LAN URL: http://${ip}:${PORT}"
+    echo "    LAN URL: http://x:${AUTH_PASSWORD}@${ip}:${PORT}"
+    echo "    User: x  Password: ${AUTH_PASSWORD}"
     echo "    Press Ctrl+C to stop"
     echo ""
     cd "$BASE_DIR"
     python3 -c "
-import http.server, socketserver, urllib.parse, os
+import http.server, socketserver, urllib.parse, os, base64
+
+AUTH_USER = 'x'
+AUTH_PASS = '${AUTH_PASSWORD}'
+AUTH_EXPECTED = base64.b64encode(f'{AUTH_USER}:{AUTH_PASS}'.encode()).decode()
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_AUTHCHECK(self):
+        auth = self.headers.get('Authorization', '')
+        if not auth.startswith('Basic ') or auth[6:] != AUTH_EXPECTED:
+            self.send_response(401)
+            self.send_header('WWW-Authenticate', 'Basic realm=\"dirindex\"')
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Unauthorized')
+            return False
+        return True
+
     def translate_path(self, path):
-        # Decode percent-encoded path properly
         path = urllib.parse.unquote(path)
         return super().translate_path(path)
 
     def do_GET(self):
-        # If requesting a directory without index.html, fall through to listing
+        if not self.do_AUTHCHECK():
+            return
         path = self.translate_path(self.path)
         if os.path.isdir(path):
             index = os.path.join(path, 'index.html')
             if os.path.exists(index):
-                # Serve index.html
                 if not self.path.endswith('/'):
                     self.send_response(301)
                     self.send_header('Location', self.path + '/')
@@ -418,8 +477,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return
         super().do_GET()
 
+    def do_HEAD(self):
+        if not self.do_AUTHCHECK():
+            return
+        super().do_HEAD()
+
     def end_headers(self):
-        # Enable range requests for video seeking
         self.send_header('Accept-Ranges', 'bytes')
         super().end_headers()
 
