@@ -398,7 +398,10 @@ setup_auth() {
         local saved_pass
         saved_pass="$(cat "$pass_file")"
         echo "Saved password found for user 'x'."
-        echo -n "Reuse it? [Y/n/new random] (y): "
+        echo "  [r] Reuse saved password (default)"
+        echo "  [n] Enter new password"
+        echo "  [g] Generate new random password"
+        echo -n "Choice [r/n/g]: "
         read -r choice
         case "$choice" in
             n|N)
@@ -406,7 +409,7 @@ setup_auth() {
                 read -r -s password
                 echo
                 ;;
-            r|R|random)
+            g|G)
                 password="$(generate_password)"
                 echo "Generated password: ${password}"
                 ;;
