@@ -379,11 +379,18 @@ do_generate() {
         done
     done
 
+    local max_jobs
+    max_jobs="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
+    local running=0
     for d in "${all_index_dirs[@]}"; do
-        if ! generate_index "$d"; then
-            echo "  ERROR: Failed to generate index for ${d}, skipping"
+        (generate_index "$d" || echo "  ERROR: Failed to generate index for ${d}, skipping") &
+        running=$(( running + 1 ))
+        if [[ "$running" -ge "$max_jobs" ]]; then
+            wait -n 2>/dev/null || wait
+            running=$(( running - 1 ))
         fi
     done
+    wait
     echo ""
     echo "=== Generation complete ==="
 }
