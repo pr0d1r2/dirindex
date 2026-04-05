@@ -12,7 +12,7 @@ PORT="${DIRINDEX_PORT:-6969}"
 THUMB_DIR=".thumbs"
 VIDEO_EXTENSIONS="mp4|mkv|avi|mov|webm|m4v|flv|wmv|mpg|mpeg|ts"
 THUMB_WIDTH=240
-VIDEOS_PER_PAGE=5
+VIDEOS_PER_PAGE=1
 
 usage() {
     echo "Usage: $0 [OPTIONS] [DIRECTORY]"
