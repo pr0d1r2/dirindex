@@ -265,11 +265,10 @@ HTMLSTYLE
         encoded_vname="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${vname}'))")"
         local vid_id
         vid_id="vid_$(echo "$vname" | md5 -q 2>/dev/null || echo "$vname" | md5sum 2>/dev/null | cut -d' ' -f1)"
-        local duration
-        duration="$(get_duration "$video")"
-        if [[ -z "$duration" || "$duration" -eq 0 ]]; then continue; fi
-        local minutes=$(( duration / 60 ))
-        local total_thumbs=$(( minutes + 1 ))
+        local thumb_dir_abs="${dir}/${THUMB_DIR}/${vname}"
+        local total_thumbs
+        total_thumbs="$(find "$thumb_dir_abs" -maxdepth 1 -name '*.jpg' 2>/dev/null | wc -l | tr -d ' ')"
+        if [[ "$total_thumbs" -eq 0 ]]; then continue; fi
 
         local thumb_base_rel="${THUMB_DIR}/${vname}"
         local encoded_thumb_base
@@ -283,17 +282,20 @@ HTMLSTYLE
             echo "</video>"
             echo "<div class=\"thumb-strip\">"
 
-            for (( i = 0; i < total_thumbs; i++ )); do
-                local secs=$(( i * 60 ))
+            while IFS= read -r thumb_file; do
+                local thumb_name
+                thumb_name="$(basename "$thumb_file")"
+                local minute_num
+                minute_num="$(echo "$thumb_name" | sed 's/^0*//' | sed 's/\.jpg$//')"
+                minute_num="${minute_num:-0}"
+                local secs=$(( minute_num * 60 ))
                 local label
                 label="$(make_time_label "$secs")"
-                local thumb_file
-                thumb_file="$(printf '%04d' "$i").jpg"
                 echo "<div class=\"thumb-item\" onclick=\"document.getElementById('${vid_id}').currentTime=${secs};document.getElementById('${vid_id}').play()\">"
-                echo "  <img src=\"${encoded_thumb_base}/${thumb_file}\" alt=\"${label}\" loading=\"lazy\">"
+                echo "  <img src=\"${encoded_thumb_base}/${thumb_name}\" alt=\"${label}\" loading=\"lazy\">"
                 echo "  <div class=\"time\">${label}</div>"
                 echo "</div>"
-            done
+            done < <(find "$thumb_dir_abs" -maxdepth 1 -name '*.jpg' 2>/dev/null | sort)
 
             echo "</div></div>"
         } >> "${dir}/index.html"
