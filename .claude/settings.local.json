@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod +x:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Skill(update-config)",
+      "Bash(bash -n /Users/pr0d1r2/projects/dirindex/dirindex.sh)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit:*)",
+            "command": "jq -r '.tool_input.command' | grep -q '^git commit' && git push 2>&1 || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/pr0d1r2/projects/dirindex && if [ -n \"$(git status --porcelain)\" ]; then git add -A && git commit -m \"Auto-commit on prompt completion\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\"; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
