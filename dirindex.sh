@@ -20,6 +20,7 @@ usage() {
     echo "Options:"
     echo "  -g, --generate    Generate thumbnails and index files only (no server)"
     echo "  -s, --serve       Serve only (skip generation)"
+    echo "  -T, --no-thumbs   Skip thumbnail generation, only regenerate index pages"
     echo "  -p, --port PORT   Server port (default: 6969, or DIRINDEX_PORT env)"
     echo "  -h, --help        Show this help"
     echo ""
@@ -28,15 +29,17 @@ usage() {
 
 generate=true
 serve=true
+skip_thumbs=false
 target_dir=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -g|--generate) generate=true; serve=false; shift ;;
-        -s|--serve)    generate=false; serve=true; shift ;;
-        -p|--port)     PORT="$2"; shift 2 ;;
-        -h|--help)     usage; exit 0 ;;
-        *)             target_dir="$1"; shift ;;
+        -g|--generate)  generate=true; serve=false; shift ;;
+        -s|--serve)     generate=false; serve=true; shift ;;
+        -T|--no-thumbs) skip_thumbs=true; shift ;;
+        -p|--port)      PORT="$2"; shift 2 ;;
+        -h|--help)      usage; exit 0 ;;
+        *)              target_dir="$1"; shift ;;
     esac
 done
 
@@ -161,21 +164,23 @@ HTMLTITLE
     body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         background: #1a1a2e; color: #e0e0e0; padding: 20px;
+        max-width: 100vw; overflow-x: hidden;
     }
     h1 { margin-bottom: 10px; color: #fff; }
     .breadcrumb { margin-bottom: 20px; font-size: 14px; }
     .breadcrumb a { color: #7eb8da; text-decoration: none; }
     .breadcrumb a:hover { text-decoration: underline; }
-    .subdirs { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 30px; }
+    .subdirs { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 30px; max-width: 100%; overflow: hidden; }
     .subdir-link {
         display: block; padding: 12px 20px; background: #16213e;
         border-radius: 8px; color: #7eb8da; text-decoration: none;
         font-size: 16px; transition: background 0.2s;
+        word-break: break-all; overflow-wrap: anywhere; max-width: 100%;
     }
     .subdir-link:hover { background: #1a1a4e; }
     .subdir-link::before { content: "📁 "; }
     .video-block { margin-bottom: 40px; background: #16213e; border-radius: 12px; padding: 20px; }
-    .video-title { font-size: 18px; margin-bottom: 12px; color: #ccc; word-break: break-all; }
+    .video-title { font-size: 18px; margin-bottom: 12px; color: #ccc; word-break: break-all; overflow-wrap: anywhere; }
     video {
         width: 100%; max-height: 70vh; background: #000;
         border-radius: 8px; display: block;
@@ -413,17 +418,21 @@ do_generate() {
     echo ""
 
     # Generate thumbnails
-    echo "--- Thumbnails ---"
-    local current=0
-    while IFS= read -r -d '' video; do
-        current=$(( current + 1 ))
-        echo "${current}/${total_videos} $(basename "$video")"
-        generate_thumbnails "$video"
-    done < <(find "$BASE_DIR" -type f \( \
-        -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.avi' -o -iname '*.mov' \
-        -o -iname '*.webm' -o -iname '*.m4v' -o -iname '*.flv' -o -iname '*.wmv' \
-        -o -iname '*.mpg' -o -iname '*.mpeg' -o -iname '*.ts' \
-    \) -print0 2>/dev/null | sort -z)
+    if $skip_thumbs; then
+        echo "--- Skipping thumbnails (-T) ---"
+    else
+        echo "--- Thumbnails ---"
+        local current=0
+        while IFS= read -r -d '' video; do
+            current=$(( current + 1 ))
+            echo "${current}/${total_videos} $(basename "$video")"
+            generate_thumbnails "$video"
+        done < <(find "$BASE_DIR" -type f \( \
+            -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.avi' -o -iname '*.mov' \
+            -o -iname '*.webm' -o -iname '*.m4v' -o -iname '*.flv' -o -iname '*.wmv' \
+            -o -iname '*.mpg' -o -iname '*.mpeg' -o -iname '*.ts' \
+        \) -print0 2>/dev/null | sort -z)
+    fi
     echo ""
 
     # Generate index.html files
