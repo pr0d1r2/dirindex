@@ -580,11 +580,56 @@ do_serve() {
     echo ""
     cd "$BASE_DIR"
     python3 -c "
-import http.server, socketserver, urllib.parse, os, base64
+import http.server, socketserver, urllib.parse, os, base64, json, threading, time
 
 AUTH_USER = 'x'
 AUTH_PASS = '${AUTH_PASSWORD}'
 AUTH_EXPECTED = base64.b64encode(f'{AUTH_USER}:{AUTH_PASS}'.encode()).decode()
+
+SEEKS_FILE = os.path.join('${BASE_DIR}', '.dirindex_seeks')
+VIDEO_EXTS = {'.mp4','.mkv','.avi','.mov','.webm','.m4v','.flv','.wmv','.mpg','.mpeg','.ts'}
+seeks_data = {}
+seeks_lock = threading.Lock()
+last_save = [0.0]
+
+def load_seeks():
+    global seeks_data
+    if os.path.exists(SEEKS_FILE):
+        try:
+            with open(SEEKS_FILE, 'r') as f:
+                seeks_data = json.load(f)
+        except Exception:
+            seeks_data = {}
+
+def save_seeks():
+    with seeks_lock:
+        try:
+            with open(SEEKS_FILE, 'w') as f:
+                json.dump(seeks_data, f, indent=2)
+        except Exception:
+            pass
+
+def record_seek(filepath, byte_offset):
+    file_size = os.path.getsize(filepath)
+    if file_size == 0:
+        return
+    # Estimate time position as percentage bucket (1-minute granularity added later with duration)
+    pct = byte_offset / file_size
+    # Store as percentage bucket (0-99)
+    bucket = min(int(pct * 100), 99)
+    rel = os.path.relpath(filepath, '${BASE_DIR}')
+    with seeks_lock:
+        if rel not in seeks_data:
+            seeks_data[rel] = {}
+        key = str(bucket)
+        seeks_data[rel][key] = seeks_data[rel].get(key, 0) + 1
+    # Save at most every 10 seconds
+    now = time.time()
+    if now - last_save[0] > 10:
+        last_save[0] = now
+        threading.Thread(target=save_seeks, daemon=True).start()
+
+load_seeks()
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_AUTHCHECK(self):
@@ -609,6 +654,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ctype = self.guess_type(fpath)
 
         if range_header.startswith('bytes='):
+            # Track seeks on video files
+            ext = os.path.splitext(fpath)[1].lower()
+            if ext in VIDEO_EXTS:
+                try:
+                    s = range_header[6:].partition('-')[0]
+                    if s:
+                        record_seek(fpath, int(s))
+                except Exception:
+                    pass
+
             range_spec = range_header[6:]
             start_str, _, end_str = range_spec.partition('-')
             start = int(start_str) if start_str else 0
@@ -675,6 +730,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Accept-Ranges', 'bytes')
         super().end_headers()
+
+import signal, atexit
+atexit.register(save_seeks)
+signal.signal(signal.SIGTERM, lambda *a: (save_seeks(), exit(0)))
+signal.signal(signal.SIGINT, lambda *a: (save_seeks(), exit(0)))
 
 with socketserver.TCPServer(('0.0.0.0', ${PORT}), Handler) as httpd:
     httpd.serve_forever()
