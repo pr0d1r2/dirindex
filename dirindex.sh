@@ -12,6 +12,7 @@ PORT="${DIRINDEX_PORT:-6969}"
 THUMB_DIR=".thumbs"
 VIDEO_EXTENSIONS="mp4|mkv|avi|mov|webm|m4v|flv|wmv|mpg|mpeg|ts"
 THUMB_WIDTH=240
+VIDEOS_PER_PAGE=5
 
 usage() {
     echo "Usage: $0 [OPTIONS] [DIRECTORY]"
@@ -121,47 +122,28 @@ make_time_label() {
     printf '%d:%02d' $(( secs / 60 )) $(( secs % 60 ))
 }
 
-generate_index() {
-    local dir="$1"
-    local rel_dir="${dir#"$BASE_DIR"}"
-    rel_dir="${rel_dir#/}"
-    local dir_name
-    dir_name="$(basename "$dir")"
-    if [[ -z "$rel_dir" ]]; then dir_name="Videos"; fi
+page_filename() {
+    local page="$1"
+    if [[ "$page" -eq 1 ]]; then
+        echo "index.html"
+    else
+        echo "page${page}.html"
+    fi
+}
 
-    # Collect videos in this directory (non-recursive)
-    local videos=()
-    while IFS= read -r -d '' f; do
-        videos+=("$f")
-    done < <(find "$dir" -maxdepth 1 -type f \( \
-        -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.avi' -o -iname '*.mov' \
-        -o -iname '*.webm' -o -iname '*.m4v' -o -iname '*.flv' -o -iname '*.wmv' \
-        -o -iname '*.mpg' -o -iname '*.mpeg' -o -iname '*.ts' \
-    \) -print0 2>/dev/null | sort -z)
+write_page_header() {
+    local outfile="$1"
+    local dir_name="$2"
+    local rel_dir="$3"
+    local page="$4"
+    local total_pages="$5"
 
-    # Collect subdirectories that contain videos (recursively)
-    local subdirs=()
-    for sub in "$dir"/*/; do
-        [[ -d "$sub" ]] || continue
-        local subname
-        subname="$(basename "$sub")"
-        if [[ "$subname" == "$THUMB_DIR" ]]; then continue; fi
-        # Check if subdir has any videos recursively
-        local count
-        count="$(find "$sub" -type f \( \
-            -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.avi' -o -iname '*.mov' \
-            -o -iname '*.webm' -o -iname '*.m4v' -o -iname '*.flv' -o -iname '*.wmv' \
-            -o -iname '*.mpg' -o -iname '*.mpeg' -o -iname '*.ts' \
-        \) 2>/dev/null | wc -l | tr -d ' ')"
-        [[ "$count" -gt 0 ]] && subdirs+=("$sub")
-    done
+    local title="$dir_name"
+    if [[ "$total_pages" -gt 1 ]]; then
+        title="${dir_name} (page ${page}/${total_pages})"
+    fi
 
-    [[ ${#videos[@]} -eq 0 && ${#subdirs[@]} -eq 0 ]] && return
-
-    echo "  INDEX: ${dir}/index.html (${#videos[@]} videos, ${#subdirs[@]} subdirs)"
-
-    # Build HTML
-    cat > "${dir}/index.html" <<'HTMLHEAD'
+    cat > "$outfile" <<'HTMLHEAD'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -169,11 +151,11 @@ generate_index() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 HTMLHEAD
 
-    cat >> "${dir}/index.html" <<HTMLTITLE
-<title>${dir_name}</title>
+    cat >> "$outfile" <<HTMLTITLE
+<title>${title}</title>
 HTMLTITLE
 
-    cat >> "${dir}/index.html" <<'HTMLSTYLE'
+    cat >> "$outfile" <<'HTMLSTYLE'
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -216,6 +198,16 @@ HTMLTITLE
     .thumb-item .time {
         font-size: 11px; color: #888; margin-top: 2px;
     }
+    .pagination {
+        display: flex; gap: 8px; margin: 20px 0; flex-wrap: wrap; align-items: center;
+    }
+    .pagination a, .pagination span {
+        display: inline-block; padding: 8px 14px; border-radius: 6px;
+        text-decoration: none; font-size: 14px;
+    }
+    .pagination a { background: #16213e; color: #7eb8da; }
+    .pagination a:hover { background: #1a1a4e; }
+    .pagination .current { background: #7eb8da; color: #1a1a2e; font-weight: bold; }
 </style>
 </head>
 <body>
@@ -240,68 +232,149 @@ HTMLSTYLE
             echo '<span>Home</span>'
         fi
         echo '</div>'
-    } >> "${dir}/index.html"
+    } >> "$outfile"
 
-    echo "<h1>${dir_name}</h1>" >> "${dir}/index.html"
+    echo "<h1>${dir_name}</h1>" >> "$outfile"
+}
 
-    # Subdirectory links
-    if [[ ${#subdirs[@]} -gt 0 ]]; then
-        echo '<div class="subdirs">' >> "${dir}/index.html"
-        for sub in "${subdirs[@]+"${subdirs[@]}"}"; do
-            local subname
-            subname="$(basename "$sub")"
-            local encoded
-            encoded="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${subname}'))")"
-            echo "<a class=\"subdir-link\" href=\"${encoded}/\">${subname}</a>" >> "${dir}/index.html"
-        done
-        echo '</div>' >> "${dir}/index.html"
+write_pagination() {
+    local outfile="$1"
+    local page="$2"
+    local total_pages="$3"
+
+    if [[ "$total_pages" -le 1 ]]; then return; fi
+
+    echo '<div class="pagination">' >> "$outfile"
+    if [[ "$page" -gt 1 ]]; then
+        echo "<a href=\"$(page_filename $(( page - 1 )))\">Prev</a>" >> "$outfile"
     fi
+    for (( pg = 1; pg <= total_pages; pg++ )); do
+        if [[ "$pg" -eq "$page" ]]; then
+            echo "<span class=\"current\">${pg}</span>" >> "$outfile"
+        else
+            echo "<a href=\"$(page_filename "$pg")\">${pg}</a>" >> "$outfile"
+        fi
+    done
+    if [[ "$page" -lt "$total_pages" ]]; then
+        echo "<a href=\"$(page_filename $(( page + 1 )))\">Next</a>" >> "$outfile"
+    fi
+    echo '</div>' >> "$outfile"
+}
 
-    # Video blocks
-    for video in "${videos[@]+"${videos[@]}"}"; do
-        local vname
-        vname="$(basename "$video")"
-        local encoded_vname
-        encoded_vname="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${vname}'))")"
-        local vid_id
-        vid_id="vid_$(echo "$vname" | md5 -q 2>/dev/null || echo "$vname" | md5sum 2>/dev/null | cut -d' ' -f1)"
-        local thumb_dir_abs="${dir}/${THUMB_DIR}/${vname}"
-        local total_thumbs
-        total_thumbs="$(find "$thumb_dir_abs" -maxdepth 1 -name '*.jpg' 2>/dev/null | wc -l | tr -d ' ')"
-        if [[ "$total_thumbs" -eq 0 ]]; then continue; fi
+generate_index() {
+    local dir="$1"
+    local rel_dir="${dir#"$BASE_DIR"}"
+    rel_dir="${rel_dir#/}"
+    local dir_name
+    dir_name="$(basename "$dir")"
+    if [[ -z "$rel_dir" ]]; then dir_name="Videos"; fi
 
-        local thumb_base_rel="${THUMB_DIR}/${vname}"
-        local encoded_thumb_base
-        encoded_thumb_base="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${thumb_base_rel}'))")"
+    # Collect videos in this directory (non-recursive)
+    local videos=()
+    while IFS= read -r -d '' f; do
+        videos+=("$f")
+    done < <(find "$dir" -maxdepth 1 -type f \( \
+        -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.avi' -o -iname '*.mov' \
+        -o -iname '*.webm' -o -iname '*.m4v' -o -iname '*.flv' -o -iname '*.wmv' \
+        -o -iname '*.mpg' -o -iname '*.mpeg' -o -iname '*.ts' \
+    \) -print0 2>/dev/null | sort -z)
 
-        {
-            echo "<div class=\"video-block\">"
-            echo "<div class=\"video-title\">${vname}</div>"
-            echo "<video id=\"${vid_id}\" controls preload=\"metadata\">"
-            echo "  <source src=\"${encoded_vname}\">"
-            echo "</video>"
-            echo "<div class=\"thumb-strip\">"
-
-            while IFS= read -r thumb_file; do
-                local thumb_name
-                thumb_name="$(basename "$thumb_file")"
-                local minute_num
-                minute_num="$(echo "$thumb_name" | sed 's/^0*//' | sed 's/\.jpg$//')"
-                minute_num="${minute_num:-0}"
-                local secs=$(( minute_num * 60 ))
-                local label
-                label="$(make_time_label "$secs")"
-                echo "<div class=\"thumb-item\" onclick=\"document.getElementById('${vid_id}').currentTime=${secs};document.getElementById('${vid_id}').play()\">"
-                echo "  <img src=\"${encoded_thumb_base}/${thumb_name}\" alt=\"${label}\" loading=\"lazy\">"
-                echo "  <div class=\"time\">${label}</div>"
-                echo "</div>"
-            done < <(find "$thumb_dir_abs" -maxdepth 1 -name '*.jpg' 2>/dev/null | sort)
-
-            echo "</div></div>"
-        } >> "${dir}/index.html"
+    # Collect subdirectories that contain videos (recursively)
+    local subdirs=()
+    for sub in "$dir"/*/; do
+        [[ -d "$sub" ]] || continue
+        local subname
+        subname="$(basename "$sub")"
+        if [[ "$subname" == "$THUMB_DIR" ]]; then continue; fi
+        local count
+        count="$(find "$sub" -type f \( \
+            -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.avi' -o -iname '*.mov' \
+            -o -iname '*.webm' -o -iname '*.m4v' -o -iname '*.flv' -o -iname '*.wmv' \
+            -o -iname '*.mpg' -o -iname '*.mpeg' -o -iname '*.ts' \
+        \) 2>/dev/null | wc -l | tr -d ' ')"
+        [[ "$count" -gt 0 ]] && subdirs+=("$sub")
     done
 
-    echo '</body></html>' >> "${dir}/index.html"
+    [[ ${#videos[@]} -eq 0 && ${#subdirs[@]} -eq 0 ]] && return
+
+    local num_videos=${#videos[@]}
+    local total_pages=$(( (num_videos + VIDEOS_PER_PAGE - 1) / VIDEOS_PER_PAGE ))
+    if [[ "$total_pages" -eq 0 ]]; then total_pages=1; fi
+
+    echo "  INDEX: ${dir}/ (${num_videos} videos, ${#subdirs[@]} subdirs, ${total_pages} pages)"
+
+    # Remove old page files
+    rm -f "${dir}"/page[0-9]*.html
+
+    for (( page = 1; page <= total_pages; page++ )); do
+        local outfile="${dir}/$(page_filename "$page")"
+        local start_idx=$(( (page - 1) * VIDEOS_PER_PAGE ))
+
+        write_page_header "$outfile" "$dir_name" "$rel_dir" "$page" "$total_pages"
+
+        # Subdirectory links (only on page 1)
+        if [[ "$page" -eq 1 && ${#subdirs[@]} -gt 0 ]]; then
+            echo '<div class="subdirs">' >> "$outfile"
+            for sub in "${subdirs[@]+"${subdirs[@]}"}"; do
+                local subname
+                subname="$(basename "$sub")"
+                local encoded
+                encoded="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${subname}'))")"
+                echo "<a class=\"subdir-link\" href=\"${encoded}/\">${subname}</a>" >> "$outfile"
+            done
+            echo '</div>' >> "$outfile"
+        fi
+
+        write_pagination "$outfile" "$page" "$total_pages"
+
+        # Video blocks for this page
+        for (( vi = start_idx; vi < start_idx + VIDEOS_PER_PAGE && vi < num_videos; vi++ )); do
+            local video="${videos[$vi]}"
+            local vname
+            vname="$(basename "$video")"
+            local encoded_vname
+            encoded_vname="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${vname}'))")"
+            local vid_id
+            vid_id="vid_$(echo "$vname" | md5 -q 2>/dev/null || echo "$vname" | md5sum 2>/dev/null | cut -d' ' -f1)"
+            local thumb_dir_abs="${dir}/${THUMB_DIR}/${vname}"
+            local total_thumbs
+            total_thumbs="$(find "$thumb_dir_abs" -maxdepth 1 -name '*.jpg' 2>/dev/null | wc -l | tr -d ' ')"
+            if [[ "$total_thumbs" -eq 0 ]]; then continue; fi
+
+            local thumb_base_rel="${THUMB_DIR}/${vname}"
+            local encoded_thumb_base
+            encoded_thumb_base="$(python3 -c "import urllib.parse; print(urllib.parse.quote('${thumb_base_rel}'))")"
+
+            {
+                echo "<div class=\"video-block\">"
+                echo "<div class=\"video-title\">${vname}</div>"
+                echo "<video id=\"${vid_id}\" controls preload=\"metadata\">"
+                echo "  <source src=\"${encoded_vname}\">"
+                echo "</video>"
+                echo "<div class=\"thumb-strip\">"
+
+                while IFS= read -r thumb_file; do
+                    local thumb_name
+                    thumb_name="$(basename "$thumb_file")"
+                    local minute_num
+                    minute_num="$(echo "$thumb_name" | sed 's/^0*//' | sed 's/\.jpg$//')"
+                    minute_num="${minute_num:-0}"
+                    local secs=$(( minute_num * 60 ))
+                    local label
+                    label="$(make_time_label "$secs")"
+                    echo "<div class=\"thumb-item\" onclick=\"var v=document.getElementById('${vid_id}');v.currentTime=${secs};v.play();v.scrollIntoView({behavior:'smooth'})\">"
+                    echo "  <img src=\"${encoded_thumb_base}/${thumb_name}\" alt=\"${label}\" loading=\"lazy\">"
+                    echo "  <div class=\"time\">${label}</div>"
+                    echo "</div>"
+                done < <(find "$thumb_dir_abs" -maxdepth 1 -name '*.jpg' 2>/dev/null | sort)
+
+                echo "</div></div>"
+            } >> "$outfile"
+        done
+
+        write_pagination "$outfile" "$page" "$total_pages"
+        echo '</body></html>' >> "$outfile"
+    done
 }
 
 do_generate() {
